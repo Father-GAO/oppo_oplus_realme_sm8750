@@ -4,7 +4,6 @@ env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android15'
   KERNEL_VERSION: '6.6'
-  KERNEL_NAME: 'android15-8-g29d86c5fc9dd-abogki428889875-4k'
   CCACHE_KEY: 'ccache-neov4-mtk_6.6.89'
 
 on:
@@ -42,11 +41,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 2. 安装 MTK 核心依赖 (修复包缺失问题)
+      - name: 2. 安装 MTK 核心依赖
         run: |
           sudo apt update -y
           sudo apt install -y --no-install-recommends \
-            ccache git-core clang llvm lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            ccache git-core clang llvm lld gcc-a64-linux-gnu \
             bc bison flex libssl-dev libelf-dev python3-pip zip unzip \
             libc6-dev-i386 ncurses-dev
           pip3 install pycryptodome --break-system-packages
@@ -67,41 +66,26 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: 5. 克隆 MTK 6.6.89 内核源码 (直接使用仓库根目录)
+      - name: 5. 克隆一加 Ace 5 至尊版官方内核源码 (MT6991 / 6.6.89)
         run: |
-          YOUR_REAL_KERNEL_REPO_URL="https://github.com/Father-GAO/oppo_oplus_realme_sm8750.git"
-          # 直接克隆到 kernel 目录
-          git clone --depth=1 "$YOUR_REAL_KERNEL_REPO_URL" kernel
-          # 列出目录结构，方便你找到真实的内核子目录
-          echo "=== 仓库目录结构 ==="
-          find kernel -maxdepth 3 -type f -name "Makefile" -o -name "Kbuild" | head -20
-          echo "====================="
+          # 使用一加官方公开的 MTK 内核源码，保证目录结构标准
+          git clone --depth=1 --branch=android15 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8750.git kernel
+          cd kernel
+          echo "✅ 当前内核版本: $(make kernelversion)"
+          cd ..
 
-      - name: 6. 配置内核 (直接进入真实内核子目录)
+      - name: 6. 配置内核 (使用官方配置)
         run: |
-          # 【关键】请根据上一步的输出，替换为你真实的内核子目录路径
-          # 例如：KERNEL_SUBDIR="kernel/oppo/oplus/sm8750"
-          KERNEL_SUBDIR="kernel"
-          # 进入内核子目录
-          cd "$KERNEL_SUBDIR"
-          # 尝试加载默认配置
-          if [ -f "arch/arm64/configs/oneplus_sm8750_defconfig" ]; then
-            make oneplus_sm8750_defconfig
-          elif [ -f "arch/arm64/configs/oppo_sm8750_defconfig" ]; then
-            make oppo_sm8750_defconfig
-          else
-            echo "⚠️ 未找到设备特定配置，使用通用配置"
-            make defconfig
-          fi
+          cd kernel
+          # 加载一加 Ace 5 至尊版的官方配置
+          make oneplus_sm8750_defconfig
           # 保存配置
           make savedefconfig
-          cd ../..
+          cd ..
 
-      - name: 7. 编译 MTK 内核 (天玑平台优化)
+      - name: 7. 编译 MTK 内核
         run: |
-          # 【关键】请根据上一步的输出，替换为你真实的内核子目录路径
-          KERNEL_SUBDIR="kernel"
-          cd "$KERNEL_SUBDIR"
+          cd kernel
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -110,15 +94,13 @@ jobs:
           export CCACHE_PREFIX=ccache
           make -j$(nproc) Image.gz dtbo.img
           ls -lh arch/arm64/boot/Image.gz arch/arm64/boot/dtbo.img
-          cd ../..
+          cd ..
 
-      - name: 8. 打包 AnyKernel3 (彻底无语法错误)
+      - name: 8. 打包 AnyKernel3
         run: |
-          # 【关键】请根据上一步的输出，替换为你真实的内核子目录路径
-          KERNEL_SUBDIR="kernel"
           mkdir -p AnyKernel3
-          cp "$KERNEL_SUBDIR/arch/arm64/boot/Image.gz" AnyKernel3/
-          cp "$KERNEL_SUBDIR/arch/arm64/boot/dtbo.img" AnyKernel3/
+          cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
+          cp kernel/arch/arm64/boot/dtbo.img AnyKernel3/
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3-Template
           cp -r AnyKernel3-Template/* AnyKernel3/
           rm -rf AnyKernel3-Template
@@ -133,15 +115,15 @@ jobs:
           printf 'package_extract_file("dtbo.img", "/dev/block/bootdevice/by-name/dtbo");\n' >> "$SCRIPT"
           printf 'ui_print("✅ 刷入成功，请重启设备!");\n' >> "$SCRIPT"
 
-          ZIP_NAME="MTK_SM8750_6.6.89_pure_kernel.zip"
+          ZIP_NAME="Ace5_Ultra_6.6.89_pure_kernel.zip"
           cd AnyKernel3 && zip -r9 "../$ZIP_NAME" . -x "*.git*" "*.md" "LICENSE"
           cd .. && ls -lh "$ZIP_NAME"
 
       - name: 9. 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: MTK_6.6.89_Kernel
-          path: MTK_SM8750_*.zip
+          name: Ace5_Ultra_Kernel
+          path: Ace5_Ultra_*.zip
           retention-days: 7
 
       - name: 10. 保存 CCACHE 缓存
