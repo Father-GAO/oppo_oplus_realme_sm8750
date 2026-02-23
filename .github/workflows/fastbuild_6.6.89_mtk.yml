@@ -30,7 +30,7 @@ on:
         description: '是否开启kpm(builtin-使用(re)sukisu内置kpm, kpn-使用独立kpm实现(支持任意KSU/面板))'
         required: true
         type: choice
-        default: 'false'
+        default: 'builtin'
         options:
           - 'false'
           - 'builtin'
@@ -48,14 +48,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 2. 安装 MTK 专属依赖 (含 ccache 修复)
+      - name: 2. 安装 MTK 核心依赖 (修复包缺失问题)
         run: |
           sudo apt update -y
-          sudo apt install -y ccache git-core clang llvm lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            bc bison flex libssl-dev libelf-dev python3-pip zip unzip
-          pip3 install pycryptodome
-          # MTK 内核编译常需的额外依赖
-          sudo apt install -y libc6-dev-i386 lib32ncurses5-dev
+          # 移除不存在的 lib32ncurses5-dev，保留MTK内核编译必需依赖
+          sudo apt install -y --no-install-recommends \
+            ccache git-core clang llvm lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            bc bison flex libssl-dev libelf-dev python3-pip zip unzip \
+            libc6-dev-i386 ncurses-dev
+          pip3 install pycryptodome --break-system-packages
 
       - name: 3. 恢复 CCACHE 缓存
         id: ccache-restore
@@ -73,10 +74,9 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: 5. 克隆 MTK 6.6.89 内核源码
+      - name: 5. 克隆 MTK 6.6.89 内核源码 (请替换为你的实际源码地址)
         run: |
-          # 请将此处替换为你实际的 MTK sm8750 内核源码地址
-          # 若为私有仓库，请确保添加了 Secrets.GITHUB_TOKEN 权限
+          # 【关键】替换为你真实的 MTK sm8750 内核源码仓库地址
           git clone --depth=1 https://github.com/你的MTK内核仓库/android_kernel_oppo_sm8750.git kernel
           cd kernel
           echo "✅ 当前内核版本: $(make kernelversion)"
@@ -90,7 +90,7 @@ jobs:
           KPM_ENABLE="${{ github.event.inputs.kpm_enable }}"
           KERNEL_VER="6.6.89"
 
-          # 步骤 A: 下载对应 KSU 仓库
+          # 下载对应 KSU 仓库
           if [ "$KSU_TYPE" != "none" ]; then
             case $KSU_TYPE in
               resukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU ;;
@@ -99,7 +99,7 @@ jobs:
               ksu) git clone --depth=1 https://github.com/tiann/KernelSU.git KernelSU ;;
             esac
 
-            # 步骤 B: 应用 KSU 基础补丁
+            # 应用 KSU 基础补丁
             if [ -f "KernelSU/patches/$KERNEL_VER/ksu.patch" ]; then
               patch -p1 < "KernelSU/patches/$KERNEL_VER/ksu.patch"
               echo "✅ 已应用 $KSU_TYPE 补丁"
@@ -108,28 +108,31 @@ jobs:
               exit 1
             fi
 
-            # 步骤 C: 应用 KPM 补丁
+            # 应用 KPM 补丁 (builtin/kpn)
             if [ "$KPM_ENABLE" != "false" ]; then
               PATCH_FILE="KernelSU/patches/$KERNEL_VER/${KPM_ENABLE}.patch"
               if [ -f "$PATCH_FILE" ]; then
                 patch -p1 < "$PATCH_FILE"
-                # 强制写入 KPM 配置，解决识别问题
+                # 强制写入 KPM 配置，确保识别
                 scripts/config --enable CONFIG_KPM
                 scripts/config --set-str KPM_VERSION "1.0.0"
-                echo "#define KPM_VERSION \"1.0.0\"" > include/linux/kpm_version.h
+                echo -e "#ifndef KPM_VERSION_H\n#define KPM_VERSION \"1.0.0\"\n#endif" > include/linux/kpm_version.h
                 echo "✅ 已开启 KPM: $KPM_ENABLE 模式"
+              else
+                echo "⚠️ 未找到 $KPM_ENABLE 对应的 KPM 补丁，跳过"
               fi
             fi
           fi
 
-          # 步骤 D: 应用 SUSFS (若开启)
+          # 应用 SUSFS 补丁 (若开启)
           if [ "$SUSFS_ENABLE" = "true" ]; then
-            # 请根据你的 SUSFS 补丁路径自行调整，此处为通用写法
             if [ -d "../patches/susfs" ]; then
               for patch in ../patches/susfs/*.patch; do
                 patch -p1 < "$patch"
               done
               echo "✅ 已开启 SUSFS 功能"
+            else
+              echo "⚠️ 未找到 SUSFS 补丁目录，跳过"
             fi
           fi
 
@@ -137,7 +140,7 @@ jobs:
           make savedefconfig
           cd ..
 
-      - name: 7. 编译 MTK 内核 (核心加速)
+      - name: 7. 编译 MTK 内核 (天玑平台优化)
         run: |
           cd kernel
           export ARCH=arm64
@@ -146,13 +149,13 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           export CCACHE_PREFIX=ccache
-          # MTK 内核通常使用的编译目标
-          make -j$(nproc) Image.gz dtbo.img vendor_boot.img
-          # 校验产物
+          # MTK 标准编译目标
+          make -j$(nproc) Image.gz dtbo.img
+          # 校验编译产物
           ls -lh arch/arm64/boot/Image.gz arch/arm64/boot/dtbo.img
           cd ..
 
-      - name: 8. 打包 AnyKernel3 (修复 EOF 语法)
+      - name: 8. 打包 AnyKernel3 (彻底无语法错误)
         run: |
           mkdir -p AnyKernel3
           # 复制编译产物
@@ -163,7 +166,7 @@ jobs:
           cp -r AnyKernel3-Template/* AnyKernel3/
           rm -rf AnyKernel3-Template
 
-          # 使用 printf 生成刷机脚本 (彻底无语法错误)
+          # 生成刷机脚本 (printf 规避 EOF 问题)
           SCRIPT="AnyKernel3/META-INF/com/google/android/updater-script"
           mkdir -p $(dirname "$SCRIPT")
           printf 'ui_print("=== 天玑特供 6.6.89 OKI 内核 ===");\n' > "$SCRIPT"
