@@ -51,7 +51,6 @@ jobs:
       - name: 2. 安装 MTK 核心依赖 (修复包缺失问题)
         run: |
           sudo apt update -y
-          # 移除不存在的 lib32ncurses5-dev，保留MTK内核编译必需依赖
           sudo apt install -y --no-install-recommends \
             ccache git-core clang llvm lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             bc bison flex libssl-dev libelf-dev python3-pip zip unzip \
@@ -74,10 +73,12 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: 5. 克隆 MTK 6.6.89 内核源码 (请替换为你的实际源码地址)
+      - name: 5. 克隆 MTK 6.6.89 内核源码 (已替换地址)
         run: |
-          # 【关键】替换为你真实的 MTK sm8750 内核源码仓库地址
-          git clone --depth=1 https://github.com/你的MTK内核仓库/android_kernel_oppo_sm8750.git kernel
+          # 已填入你的真实内核仓库地址
+          YOUR_REAL_KERNEL_REPO_URL="https://github.com/Father-GAO/oppo_oplus_realme_sm8750.git"
+
+          git clone --depth=1 "$YOUR_REAL_KERNEL_REPO_URL" kernel
           cd kernel
           echo "✅ 当前内核版本: $(make kernelversion)"
           cd ..
@@ -90,7 +91,6 @@ jobs:
           KPM_ENABLE="${{ github.event.inputs.kpm_enable }}"
           KERNEL_VER="6.6.89"
 
-          # 下载对应 KSU 仓库
           if [ "$KSU_TYPE" != "none" ]; then
             case $KSU_TYPE in
               resukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git KernelSU ;;
@@ -99,7 +99,6 @@ jobs:
               ksu) git clone --depth=1 https://github.com/tiann/KernelSU.git KernelSU ;;
             esac
 
-            # 应用 KSU 基础补丁
             if [ -f "KernelSU/patches/$KERNEL_VER/ksu.patch" ]; then
               patch -p1 < "KernelSU/patches/$KERNEL_VER/ksu.patch"
               echo "✅ 已应用 $KSU_TYPE 补丁"
@@ -108,12 +107,10 @@ jobs:
               exit 1
             fi
 
-            # 应用 KPM 补丁 (builtin/kpn)
             if [ "$KPM_ENABLE" != "false" ]; then
               PATCH_FILE="KernelSU/patches/$KERNEL_VER/${KPM_ENABLE}.patch"
               if [ -f "$PATCH_FILE" ]; then
                 patch -p1 < "$PATCH_FILE"
-                # 强制写入 KPM 配置，确保识别
                 scripts/config --enable CONFIG_KPM
                 scripts/config --set-str KPM_VERSION "1.0.0"
                 echo -e "#ifndef KPM_VERSION_H\n#define KPM_VERSION \"1.0.0\"\n#endif" > include/linux/kpm_version.h
@@ -124,7 +121,6 @@ jobs:
             fi
           fi
 
-          # 应用 SUSFS 补丁 (若开启)
           if [ "$SUSFS_ENABLE" = "true" ]; then
             if [ -d "../patches/susfs" ]; then
               for patch in ../patches/susfs/*.patch; do
@@ -136,7 +132,6 @@ jobs:
             fi
           fi
 
-          # 保存配置
           make savedefconfig
           cd ..
 
@@ -149,24 +144,19 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           export CCACHE_PREFIX=ccache
-          # MTK 标准编译目标
           make -j$(nproc) Image.gz dtbo.img
-          # 校验编译产物
           ls -lh arch/arm64/boot/Image.gz arch/arm64/boot/dtbo.img
           cd ..
 
       - name: 8. 打包 AnyKernel3 (彻底无语法错误)
         run: |
           mkdir -p AnyKernel3
-          # 复制编译产物
           cp kernel/arch/arm64/boot/Image.gz AnyKernel3/
           cp kernel/arch/arm64/boot/dtbo.img AnyKernel3/
-          # 克隆打包模板
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3-Template
           cp -r AnyKernel3-Template/* AnyKernel3/
           rm -rf AnyKernel3-Template
 
-          # 生成刷机脚本 (printf 规避 EOF 问题)
           SCRIPT="AnyKernel3/META-INF/com/google/android/updater-script"
           mkdir -p $(dirname "$SCRIPT")
           printf 'ui_print("=== 天玑特供 6.6.89 OKI 内核 ===");\n' > "$SCRIPT"
@@ -177,7 +167,6 @@ jobs:
           printf 'package_extract_file("dtbo.img", "/dev/block/bootdevice/by-name/dtbo");\n' >> "$SCRIPT"
           printf 'ui_print("✅ 刷入成功，请重启设备!");\n' >> "$SCRIPT"
 
-          # 生成最终包名
           ZIP_NAME="MTK_SM8750_6.6.89_${{ github.event.inputs.ksu_type }}_KPM-${{ github.event.inputs.kpm_enable }}.zip"
           cd AnyKernel3 && zip -r9 "../$ZIP_NAME" . -x "*.git*" "*.md" "LICENSE"
           cd .. && ls -lh "$ZIP_NAME"
