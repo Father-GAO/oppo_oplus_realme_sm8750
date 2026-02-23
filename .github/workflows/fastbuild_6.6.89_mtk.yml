@@ -73,19 +73,14 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: 5. 克隆 MTK 6.6.89 内核源码 (修复目录结构)
+      - name: 5. 克隆 MTK 6.6.89 内核源码 (直接使用仓库根目录)
         run: |
           YOUR_REAL_KERNEL_REPO_URL="https://github.com/Father-GAO/oppo_oplus_realme_sm8750.git"
-          git clone --depth=1 "$YOUR_REAL_KERNEL_REPO_URL" temp_kernel
-          # 找到真正的内核根目录（适配你的仓库结构）
-          cd temp_kernel
-          KERNEL_ROOT=$(find . -name "Makefile" -a -name "Kbuild" | head -1 | xargs dirname)
-          echo "✅ 找到内核根目录: $KERNEL_ROOT"
-          mv "$KERNEL_ROOT" ../kernel
-          cd .. && rm -rf temp_kernel
+          # 直接克隆到 kernel 目录，不再自动扫描
+          git clone --depth=1 "$YOUR_REAL_KERNEL_REPO_URL" kernel
           # 进入内核目录并检测版本
           cd kernel
-          echo "✅ 当前内核版本: $(make kernelversion)"
+          echo "✅ 当前内核版本: $(make kernelversion || echo '未检测到版本，请检查目录结构')"
           cd ..
 
       - name: 6. 应用 KSU / SUSFS / KPM 补丁 (兼容补丁版本)
